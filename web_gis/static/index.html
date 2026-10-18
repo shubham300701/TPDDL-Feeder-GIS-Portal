@@ -2395,7 +2395,7 @@
 
     function loadBulkSample() {
       document.getElementById('bulk-pole-input').value =
-        'HT515-44/83\n515-1/67\n515-1/65\nHT515-41/1/12\n515-1/64';
+        'HT515-44/83\n515-1/67\n519-5/8\nHT521-30/5\n518-1/1\n512-1/1';
       updateBulkCount();
     }
 
@@ -2434,7 +2434,8 @@
       statusBadge.className = 'text-[10px] bg-amber-500 text-white font-bold px-2 py-0.5 rounded animate-pulse';
 
       const tbody = document.getElementById('bulk-results-table');
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-400 font-sans font-bold text-xs">Resolving ${poles.length} pole numbers against the GIS database…</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500 font-sans font-bold text-xs"><i data-lucide="loader-2" class="w-4 h-4 inline-block animate-spin mr-1"></i> Resolving ${poles.length} pole(s) across Local Database & TPDDL Web GIS…</td></tr>`;
+      lucide.createIcons();
 
       try {
         const res = await fetch('/api/bulk_poles', {
@@ -2454,28 +2455,33 @@
         const totalLoad = (data.found || []).reduce((s, p) => s + (p.total_load_kw || 0), 0);
         document.getElementById('bulk-total-load').textContent = totalLoad.toLocaleString(undefined, {maximumFractionDigits: 0});
 
-        // Hide old not-found sub-panel (now shown inline in table)
         document.getElementById('bulk-notfound-panel').classList.add('hidden');
 
-        // Build UNIFIED results table (found + not-found together in order)
+        // Build UNIFIED results table (Local found + Web found + Not found)
         tbody.innerHTML = '';
         const allRows = [
-          ...(data.found || []).map(p => ({ ...p, _type: p.source === 'local_no_coords' ? 'no_coords' : 'found' })),
-          ...(data.not_found || []).map(p => ({ ...p, _type: 'web' }))
+          ...(data.found || []).map(p => ({
+            ...p,
+            _type: p.source === 'web' ? 'web' : (p.source === 'local_no_coords' ? 'no_coords' : 'local')
+          })),
+          ...(data.not_found || []).map(p => ({ ...p, _type: 'not_found' }))
         ];
 
         if (allRows.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-rose-500 font-sans font-bold text-xs">No poles found — check format (e.g. HT515-41/1/12)</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-rose-500 font-sans font-bold text-xs">No poles found — check format (e.g. 519-5/8, HT521-30/5)</td></tr>`;
         } else {
           allRows.forEach((p, idx) => {
             const tr = document.createElement('tr');
 
-            if (p._type === 'found') {
-              // ── GREEN row: found in local DB with coordinates ──
+            if (p._type === 'local') {
+              // ── LOCAL DB with coordinates (full feeder details) ──
               tr.className = 'hover:bg-blue-50 border-b border-slate-100';
               tr.innerHTML = `
                 <td class="p-1.5 text-slate-400 font-bold text-[10px]">${idx + 1}</td>
-                <td class="p-1.5 font-bold text-slate-900 font-mono text-[10.5px]">${p.pole_no}</td>
+                <td class="p-1.5 font-bold text-slate-900 font-mono text-[10.5px]">
+                  ${p.pole_no}
+                  <span class="ml-1 text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1 py-0.2 rounded font-bold">Local DB</span>
+                </td>
                 <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.zone === '515' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">${p.zone}</span></td>
                 <td class="p-1.5 text-slate-600 text-[10px] truncate max-w-[110px]" title="${p.dt_name || ''}">${p.dt_name || '--'}</td>
                 <td class="p-1.5 text-slate-500 text-[10px] truncate max-w-[90px]" title="${p.sub_feeder || ''}">${p.sub_feeder || '--'}</td>
@@ -2485,20 +2491,49 @@
                   <a href="${p.tata_gis_link}" target="_blank" title="Open TATA Power ePrajal GIS Portal" class="text-blue-700 hover:text-blue-900 font-bold text-[10px] underline">GIS ↗</a>
                 </td>
                 <td class="p-1.5 text-center">
-                  <button onclick="zoomToBulkPole(${p.latitude}, ${p.longitude}, '${p.pole_no.replace(/'/g, "\\'")}', ${idx})" class="text-[#005DAA] hover:text-blue-900" title="Zoom to pole on GIS Map">
+                  <button onclick="zoomToBulkPole(${p.latitude}, ${p.longitude}, '${p.pole_no.replace(/'/g, "\\'")}', ${idx}, 'local')" class="text-[#005DAA] hover:text-blue-900 cursor-pointer" title="Zoom to pole on GIS Map">
                     <i data-lucide="map-pin" class="w-3.5 h-3.5 mx-auto"></i>
                   </button>
                 </td>
               `;
 
+            } else if (p._type === 'web') {
+              // ── WEB GIS pole (coordinates extracted from TPDDL GIS web) ──
+              tr.className = 'bg-sky-50/60 hover:bg-sky-100/60 border-b border-sky-100';
+              tr.innerHTML = `
+                <td class="p-1.5 text-sky-400 font-bold text-[10px]">${idx + 1}</td>
+                <td class="p-1.5 font-bold text-sky-950 font-mono text-[10.5px]">
+                  ${p.pole_no}
+                  <span class="ml-1 text-[9px] bg-sky-100 text-sky-800 border border-sky-300 px-1 py-0.2 rounded font-bold" title="Searched from web, no Feeder Data Available">🌐 Web GIS</span>
+                </td>
+                <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">${p.zone}</span></td>
+                <td class="p-1.5 text-sky-700 italic text-[10px]" title="Searched from web, no Feeder Data Available">No Feeder Data</td>
+                <td class="p-1.5 text-slate-400 italic text-[10px]">--</td>
+                <td class="p-1.5 text-right text-slate-400 text-[10px]">—</td>
+                <td class="p-1.5 text-right text-slate-400 text-[10px]">—</td>
+                <td class="p-1.5 text-center">
+                  <a href="${p.tata_gis_link || 'https://www.tatapower-ddl.com/gis/index-gps.html#openModal'}"
+                     target="_blank"
+                     title="Open TPDDL Web GIS Portal"
+                     class="text-sky-700 hover:text-sky-900 font-bold text-[10px] underline">
+                    GIS ↗
+                  </a>
+                </td>
+                <td class="p-1.5 text-center">
+                  <button onclick="zoomToBulkPole(${p.latitude}, ${p.longitude}, '${p.pole_no.replace(/'/g, "\\'")}', ${idx}, 'web')" class="text-sky-600 hover:text-sky-900 cursor-pointer" title="Zoom to Web GIS pole on map">
+                    <i data-lucide="map-pin" class="w-3.5 h-3.5 mx-auto text-sky-600"></i>
+                  </button>
+                </td>
+              `;
+
             } else if (p._type === 'no_coords') {
-              // ── YELLOW row: in DB but no GPS coordinates recorded ──
+              // ── In DB but no GPS coordinates ──
               tr.className = 'bg-amber-50 border-b border-amber-100';
               tr.innerHTML = `
                 <td class="p-1.5 text-amber-400 font-bold text-[10px]">${idx + 1}</td>
                 <td class="p-1.5 font-bold text-amber-900 font-mono text-[10.5px]">
                   ${p.pole_no}
-                  <span class="ml-1 text-[9px] bg-amber-100 text-amber-700 border border-amber-300 px-1 py-0.5 rounded font-bold" title="Pole found in local database but GIS coordinates not recorded">No GPS</span>
+                  <span class="ml-1 text-[9px] bg-amber-100 text-amber-700 border border-amber-300 px-1 py-0.2 rounded font-bold">No GPS</span>
                 </td>
                 <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.zone === '515' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">${p.zone || '--'}</span></td>
                 <td class="p-1.5 text-amber-700 text-[10px] truncate max-w-[110px]" title="${p.dt_name || ''}">${p.dt_name || '--'}</td>
@@ -2506,21 +2541,21 @@
                 <td class="p-1.5 text-right font-bold text-amber-800 text-[10.5px]">${p.consumer_count}</td>
                 <td class="p-1.5 text-right font-bold text-amber-700 font-mono text-[10.5px]">${(p.total_load_kw || 0).toLocaleString()}</td>
                 <td class="p-1.5 text-center">
-                  <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal" target="_blank" title="Open TPDDL GIS to locate this pole manually" class="text-amber-700 hover:text-amber-900 font-bold text-[10px] underline">GIS ↗</a>
+                  <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal" target="_blank" class="text-amber-700 hover:text-amber-900 font-bold text-[10px] underline">GIS ↗</a>
                 </td>
-                <td class="p-1.5 text-center text-amber-400 text-[10px] font-bold" title="No GPS coordinates — cannot plot on map">—</td>
+                <td class="p-1.5 text-center text-amber-400 text-[10px] font-bold">—</td>
               `;
 
             } else {
-              // ── RED/AMBER row: NOT in local DB at all → "Searched from Web" ──
+              // ── Unmatched anywhere ──
               tr.className = 'bg-rose-50 border-b border-rose-100';
               tr.innerHTML = `
                 <td class="p-1.5 text-rose-400 font-bold text-[10px]">${idx + 1}</td>
                 <td class="p-1.5 font-bold text-rose-800 font-mono text-[10.5px]">
                   ${p.input_query}
-                  <span class="ml-1 text-[9px] bg-rose-100 text-rose-700 border border-rose-300 px-1 py-0.5 rounded font-bold" title="Not found in local Zone 515 & 518 database — click GIS to search on TPDDL Portal">Not in DB</span>
+                  <span class="ml-1 text-[9px] bg-rose-100 text-rose-700 border border-rose-300 px-1 py-0.2 rounded font-bold">Not Found</span>
                 </td>
-                <td class="p-1.5 text-rose-400 text-[10px]">—</td>
+                <td class="p-1.5 text-rose-400 text-[10px]">${p.zone || '—'}</td>
                 <td class="p-1.5 text-rose-400 text-[10px]">—</td>
                 <td class="p-1.5 text-rose-400 text-[10px]">—</td>
                 <td class="p-1.5 text-right text-rose-400 text-[10px]">—</td>
@@ -2528,12 +2563,12 @@
                 <td class="p-1.5 text-center">
                   <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal"
                      target="_blank"
-                     title="Searched from Web — Not in local database. Click to open TPDDL GIS portal and search manually for this pole."
+                     title="Open TPDDL GIS portal modal to search manually"
                      class="inline-flex items-center gap-0.5 text-rose-700 hover:text-rose-900 font-bold text-[10px] underline">
                     🌐 Web ↗
                   </a>
                 </td>
-                <td class="p-1.5 text-center text-rose-400 text-[10px] font-bold" title="Cannot plot — not in local database">—</td>
+                <td class="p-1.5 text-center text-rose-400 text-[10px] font-bold">—</td>
               `;
             }
 
@@ -2545,7 +2580,7 @@
           document.getElementById('bulk-fit-btn').classList.remove('hidden');
         }
 
-        // Plot only poles that have coordinates on the GIS map
+        // Plot ALL poles with coordinates (both Local DB & Web GIS)
         plotBulkPinsOnMap((data.found || []).filter(p => p.latitude && p.longitude));
 
       } catch (e) {
@@ -2570,28 +2605,58 @@
       poles.forEach((p, idx) => {
         if (!p.latitude || !p.longitude) return;
 
-        // Zone-coloured circle markers (515=blue, 518=purple)
-        const color = p.zone === '515' ? '#1d4ed8' : '#7e22ce';
-        const fillColor = p.zone === '515' ? '#3b82f6' : '#a855f7';
+        const isWeb = (p.source === 'web');
+
+        // Color coding: Local 515 = Blue, Local 518 = Purple, Web GIS = Sky/Teal
+        let color, fillColor;
+        if (isWeb) {
+          color = '#0284c7';
+          fillColor = '#38bdf8';
+        } else {
+          color = p.zone === '515' ? '#1d4ed8' : '#7e22ce';
+          fillColor = p.zone === '515' ? '#3b82f6' : '#a855f7';
+        }
 
         const marker = L.circleMarker([p.latitude, p.longitude], {
-          radius: 7,
+          radius: isWeb ? 8 : 7,
           fillColor,
           color,
-          weight: 2,
+          weight: isWeb ? 2.5 : 2,
           opacity: 1,
-          fillOpacity: 0.88
+          fillOpacity: isWeb ? 0.95 : 0.88
         });
 
-        // Tooltip
-        marker.bindTooltip(`
-          <b>#${idx + 1} ${p.pole_no}</b><br/>
-          Zone: ${p.zone} | DT: ${p.dt_name || '--'}<br/>
-          CAs: ${p.consumer_count} | Load: ${(p.total_load_kw || 0).toLocaleString()} kW
-        `, { className: 'clean-tooltip', sticky: true });
+        // Hover Tooltip
+        if (isWeb) {
+          marker.bindTooltip(`
+            <div style="font-family: inherit; font-size: 11px;">
+              <b style="color: #0284c7;">🌐 #${idx + 1} ${p.pole_no}</b> (Zone ${p.zone})<br/>
+              <b>GPS:</b> ${Number(p.latitude).toFixed(6)}, ${Number(p.longitude).toFixed(6)}<br/>
+              <span style="color: #e11d48; font-weight: 700;">⚠️ Searched from web, no Feeder Data Available</span>
+            </div>
+          `, { className: 'clean-tooltip', sticky: true });
 
-        // Click → open pole modal
-        marker.on('click', () => openPoleModal(p.pole_no));
+          // Click Popup
+          marker.bindPopup(`
+            <div style="padding: 6px; font-family: 'Rajdhani', sans-serif;">
+              <div style="font-size: 14px; font-weight: 700; color: #0284c7; margin-bottom: 2px;">🌐 Pole ${p.pole_no}</div>
+              <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">Zone ${p.zone} • Tata Power-DDL Web GIS</div>
+              <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 4px; padding: 6px; font-size: 11.5px; color: #0369a1; margin-bottom: 8px;">
+                <b>Coordinates:</b> ${Number(p.latitude).toFixed(6)}, ${Number(p.longitude).toFixed(6)}<br/>
+                <b style="color: #be123c;">Remarks:</b> Searched from web, no Feeder Data Available
+              </div>
+              <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal" target="_blank" style="display: inline-block; background: #005DAA; color: white; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: bold;">Open TPDDL Web Portal ↗</a>
+            </div>
+          `);
+        } else {
+          marker.bindTooltip(`
+            <b>#${idx + 1} ${p.pole_no}</b><br/>
+            Zone: ${p.zone} | DT: ${p.dt_name || '--'}<br/>
+            CAs: ${p.consumer_count} | Load: ${(p.total_load_kw || 0).toLocaleString()} kW
+          `, { className: 'clean-tooltip', sticky: true });
+
+          marker.on('click', () => openPoleModal(p.pole_no));
+        }
 
         marker.addTo(bulkPolesLayer);
         bounds.push([p.latitude, p.longitude]);
@@ -2604,11 +2669,27 @@
       }
     }
 
-    function zoomToBulkPole(lat, lon, poleNo, idx) {
+    function zoomToBulkPole(lat, lon, poleNo, idx, source) {
       switchTab('map');
       if (lat && lon) {
         map.setView([lat, lon], 18, { animate: true });
-        openPoleModal(poleNo);
+        if (source === 'web') {
+          L.popup()
+            .setLatLng([lat, lon])
+            .setContent(`
+              <div style="padding: 6px; font-family: 'Rajdhani', sans-serif;">
+                <div style="font-size: 14px; font-weight: 700; color: #0284c7; margin-bottom: 2px;">🌐 Pole ${poleNo}</div>
+                <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 4px; padding: 6px; font-size: 11.5px; color: #0369a1; margin-bottom: 8px;">
+                  <b>Coordinates:</b> ${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}<br/>
+                  <b style="color: #be123c;">Remarks:</b> Searched from web, no Feeder Data Available
+                </div>
+                <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal" target="_blank" style="display: inline-block; background: #005DAA; color: white; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: bold;">Open TPDDL Web Portal ↗</a>
+              </div>
+            `)
+            .openOn(map);
+        } else {
+          openPoleModal(poleNo);
+        }
       }
     }
 

@@ -8,7 +8,7 @@ import csv
 import io
 import gzip
 import shutil
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from fastapi import FastAPI, Query, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -915,11 +915,170 @@ def export_kml(
         headers={"Content-Disposition": f'attachment; filename="feeder_{title[:25].replace(" ", "_")}.kml"'}
     )
 
+# ── Zone Extraction & TPDDL Web GIS Resolution Engine ──
+ZONE_EXTRACTION_PATTERNS = [
+    re.compile(r'^(?:UHT|HT|SL|LT)?(\d{3,4})-', re.IGNORECASE),
+    re.compile(r'^(?:UHT|HT|SL|LT)?(5\d{2}|4\d{2}|13\d{2})', re.IGNORECASE),
+    re.compile(r'(?:ZONE|ZN)\s*[:=-]?\s*(\d{3,4})', re.IGNORECASE)
+]
+
+def extract_zone_from_pole(pole_str: str) -> str:
+    clean = str(pole_str).strip()
+    for p in ZONE_EXTRACTION_PATTERNS:
+        m = p.search(clean)
+        if m:
+            z = m.group(1)
+            if z:
+                return z
+    return ""
+
+_ZONE_POLES_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+GIS_CACHE_DIR = os.path.join(BASE_DIR, "gis_cache")
+ALT_GIS_DIR = os.path.join(PROJECT_DIR, "HTGisManagerApp", "app", "src", "main", "assets", "gis")
+
+def get_zone_poles_data(zone: str) -> List[Dict[str, Any]]:
+    if not zone:
+        return []
+    if zone in _ZONE_POLES_CACHE:
+        return _ZONE_POLES_CACHE[zone]
+
+    # 1. Check local gis_cache
+    cache_path = os.path.join(GIS_CACHE_DIR, f"pole_{zone}.json")
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 100:
+        try:
+            with open(cache_path, "r", encoding="utf-8", errors="ignore") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    _ZONE_POLES_CACHE[zone] = data
+                    return data
+        except Exception:
+            pass
+
+    # 2. Check bundled assets from HTGisManagerApp
+    alt_path = os.path.join(ALT_GIS_DIR, f"pole_{zone}.json")
+    if os.path.exists(alt_path) and os.path.getsize(alt_path) > 100:
+        try:
+            with open(alt_path, "r", encoding="utf-8", errors="ignore") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    _ZONE_POLES_CACHE[zone] = data
+                    os.makedirs(GIS_CACHE_DIR, exist_ok=True)
+                    try:
+                        with open(cache_path, "w", encoding="utf-8") as wf:
+                            json.dump(data, wf)
+                    except Exception:
+                        pass
+                    return data
+        except Exception:
+            pass
+
+    # 3. Fetch dynamically from official Tata Power-DDL GIS server
+    try:
+        import urllib.request
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        url = f"https://www.tatapower-ddl.com/gis/json/pole_{zone}.json"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+            content = resp.read().decode("utf-8", errors="ignore")
+            data = json.loads(content)
+            if isinstance(data, list) and data:
+                _ZONE_POLES_CACHE[zone] = data
+                os.makedirs(GIS_CACHE_DIR, exist_ok=True)
+                try:
+                    with open(cache_path, "w", encoding="utf-8") as wf:
+                        wf.write(content)
+                except Exception:
+                    pass
+                return data
+    except Exception as e:
+        print(f"[GIS WEB] Error fetching zone {zone} from TPDDL: {e}")
+
+    return []
+
+def resolve_web_pole_coords(zone: str, pole_number: str) -> Optional[Tuple[float, float, str, str]]:
+    if not pole_number:
+        return None
+    clean_pole = pole_number.strip().upper()
+    primary_zone = zone.strip() if zone else "512"
+
+    def search_in_zone(z: str):
+        poles_list = get_zone_poles_data(z)
+        if not poles_list:
+            return None
+
+        # Stage 1: Exact Match (NUMBER or ID)
+        for item in poles_list:
+            num = (item.get("NUMBER") or "").strip().upper()
+            pid = (item.get("ID") or "").strip().upper()
+            if num == clean_pole or pid == clean_pole:
+                try:
+                    lat, lon = float(item["LAT"]), float(item["LON"])
+                    if lat and lon:
+                        return (lat, lon, item.get("NUMBER") or clean_pole, z)
+                except Exception:
+                    pass
+
+        # Stage 2: Normalized Match (strip prefixes UHT, HT, LT, SL)
+        stripped_query = re.sub(r'^(UHT|HT|LT|SL)', '', clean_pole).strip()
+        if stripped_query:
+            for item in poles_list:
+                num = (item.get("NUMBER") or "").strip().upper()
+                stripped_num = re.sub(r'^(UHT|HT|LT|SL)', '', num).strip()
+                if stripped_num == stripped_query:
+                    try:
+                        lat, lon = float(item["LAT"]), float(item["LON"])
+                        if lat and lon:
+                            return (lat, lon, item.get("NUMBER") or clean_pole, z)
+                    except Exception:
+                        pass
+
+        # Stage 3: Hierarchical Parent Feeder Spur Search
+        parts = stripped_query.split("/")
+        while len(parts) > 1:
+            parts.pop()
+            candidate = "/".join(parts)
+            for item in poles_list:
+                num = (item.get("NUMBER") or "").strip().upper()
+                stripped_num = re.sub(r'^(UHT|HT|LT|SL)', '', num).strip()
+                if stripped_num == candidate or num == candidate:
+                    try:
+                        lat, lon = float(item["LAT"]), float(item["LON"])
+                        if lat and lon:
+                            return (lat, lon, item.get("NUMBER") or candidate, z)
+                    except Exception:
+                        pass
+        return None
+
+    # First attempt: extracted / primary zone
+    res = search_in_zone(primary_zone)
+    if res:
+        return res
+
+    # Fallback to other known circles/zones if not resolved in primary
+    fallback_zones = ["512", "521", "511", "513", "514", "522", "533", "531", "518", "519", "515", "501"]
+    for fb in fallback_zones:
+        if fb != primary_zone:
+            res = search_in_zone(fb)
+            if res:
+                return res
+    return None
+
 @app.post("/api/bulk_poles")
 def bulk_poles_lookup(data: Dict[str, Any]):
     """
     Accept a list of pole numbers (or raw text lines) and return GIS data for each.
-    Also opens TATA Power GIS link for each resolved pole.
+    1. Primary: Match against local SQLite DB (Zone 515 & 518 feeder data).
+    2. Fallback: Automatically extract zone from pole (e.g. 519-5/8 -> Zone 519, HT521-30/5 -> Zone 521),
+       query TPDDL Web GIS dataset for that zone, extract coordinates, and return for in-app map plotting!
     """
     conn = get_db()
     cur = conn.cursor()
@@ -936,8 +1095,10 @@ def bulk_poles_lookup(data: Dict[str, Any]):
     not_found = []
 
     for pole_no in pole_list:
-        # Try exact match first, then prefix/suffix trim
         clean_no = re.sub(r'^(UHT|HT|LT|SL)', '', pole_no).strip()
+        extracted_zone = extract_zone_from_pole(pole_no)
+
+        # ── 1. Primary: Search in local DB ──
         cur.execute("""
             SELECT
                 pole_no, zone, latitude, longitude,
@@ -951,6 +1112,7 @@ def bulk_poles_lookup(data: Dict[str, Any]):
             LIMIT 1
         """, [pole_no, f"%{pole_no}%", clean_no, f"%{clean_no}%"])
         row = cur.fetchone()
+
         if row:
             results.append({
                 "pole_no": row["pole_no"],
@@ -966,47 +1128,75 @@ def bulk_poles_lookup(data: Dict[str, Any]):
                 "total_load_kw": row["total_load_kw"],
                 "tata_gis_link": f"https://eprajal.tatapower-ddl.com/GIS/default.aspx?search={row['pole_no']}",
                 "input_query": pole_no,
-                "matched": True
+                "matched": True,
+                "source": "local",
+                "remarks": "Mapped from Local GIS Database"
             })
         else:
-            # Pole not in local DB — fall back to TPDDL GIS web portal link
-            # Try also checking if pole exists but has zero consumers (no lat/lon)
-            cur.execute("""
-                SELECT pole_no, zone, grid_name, trunk_feeder, sub_feeder, substation, dt_name,
-                       COUNT(ca_no) as consumer_count,
-                       ROUND(SUM(consumer_load), 2) as total_load_kw
-                FROM consumers
-                WHERE (pole_no = ? OR pole_no LIKE ? OR pole_no = ? OR pole_no LIKE ?)
-                GROUP BY pole_no, zone, grid_name, trunk_feeder, sub_feeder, substation, dt_name
-                LIMIT 1
-            """, [pole_no, f"%{pole_no}%", clean_no, f"%{clean_no}%"])
-            partial = cur.fetchone()
-            if partial:
-                # Pole exists in DB but has no coordinates (unplotted)
+            # ── 2. Fallback: Search from TPDDL Web GIS dataset via extracted zone ──
+            web_coords = resolve_web_pole_coords(extracted_zone, pole_no)
+            if web_coords:
+                lat, lon, matched_num, res_zone = web_coords
+                zone_disp = res_zone or extracted_zone or "Ext"
                 results.append({
-                    "pole_no": partial["pole_no"],
-                    "zone": partial["zone"],
-                    "latitude": None,
-                    "longitude": None,
-                    "grid_name": partial["grid_name"],
-                    "trunk_feeder": partial["trunk_feeder"],
-                    "sub_feeder": partial["sub_feeder"],
-                    "substation": partial["substation"],
-                    "dt_name": partial["dt_name"],
-                    "consumer_count": partial["consumer_count"],
-                    "total_load_kw": partial["total_load_kw"],
+                    "pole_no": matched_num or pole_no,
+                    "zone": zone_disp,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "grid_name": f"Zone {zone_disp} (Web GIS)",
+                    "trunk_feeder": "N/A (Web)",
+                    "sub_feeder": "N/A (Web)",
+                    "substation": "N/A (Web)",
+                    "dt_name": "N/A (Web)",
+                    "consumer_count": 0,
+                    "total_load_kw": 0.0,
                     "tata_gis_link": f"https://www.tatapower-ddl.com/gis/index-gps.html#openModal",
                     "input_query": pole_no,
                     "matched": True,
-                    "source": "local_no_coords"
+                    "source": "web",
+                    "remarks": "Searched from web, no Feeder Data Available"
                 })
             else:
-                not_found.append({
-                    "input_query": pole_no,
-                    "matched": False,
-                    "source": "web",
-                    "tata_gis_link": f"https://www.tatapower-ddl.com/gis/index-gps.html#openModal"
-                })
+                # ── 3. Check if in local DB without GPS coordinates ──
+                cur.execute("""
+                    SELECT pole_no, zone, grid_name, trunk_feeder, sub_feeder, substation, dt_name,
+                           COUNT(ca_no) as consumer_count,
+                           ROUND(SUM(consumer_load), 2) as total_load_kw
+                    FROM consumers
+                    WHERE (pole_no = ? OR pole_no LIKE ? OR pole_no = ? OR pole_no LIKE ?)
+                    GROUP BY pole_no, zone, grid_name, trunk_feeder, sub_feeder, substation, dt_name
+                    LIMIT 1
+                """, [pole_no, f"%{pole_no}%", clean_no, f"%{clean_no}%"])
+                partial = cur.fetchone()
+                if partial:
+                    results.append({
+                        "pole_no": partial["pole_no"],
+                        "zone": partial["zone"],
+                        "latitude": None,
+                        "longitude": None,
+                        "grid_name": partial["grid_name"],
+                        "trunk_feeder": partial["trunk_feeder"],
+                        "sub_feeder": partial["sub_feeder"],
+                        "substation": partial["substation"],
+                        "dt_name": partial["dt_name"],
+                        "consumer_count": partial["consumer_count"],
+                        "total_load_kw": partial["total_load_kw"],
+                        "tata_gis_link": f"https://www.tatapower-ddl.com/gis/index-gps.html#openModal",
+                        "input_query": pole_no,
+                        "matched": True,
+                        "source": "local_no_coords",
+                        "remarks": "Found in local DB but unplotted (no GPS)"
+                    })
+                else:
+                    # ── 4. Unmatched anywhere ──
+                    not_found.append({
+                        "input_query": pole_no,
+                        "zone": extracted_zone or "Unknown",
+                        "matched": False,
+                        "source": "not_found",
+                        "remarks": "Pole not found in Local DB or TPDDL Web GIS",
+                        "tata_gis_link": f"https://www.tatapower-ddl.com/gis/index-gps.html#openModal"
+                    })
 
     conn.close()
     return {
