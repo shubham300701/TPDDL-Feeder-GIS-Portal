@@ -915,6 +915,71 @@ def export_kml(
         headers={"Content-Disposition": f'attachment; filename="feeder_{title[:25].replace(" ", "_")}.kml"'}
     )
 
+@app.post("/api/bulk_poles")
+def bulk_poles_lookup(data: Dict[str, Any]):
+    """
+    Accept a list of pole numbers (or raw text lines) and return GIS data for each.
+    Also opens TATA Power GIS link for each resolved pole.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+
+    raw_list = data.get("poles", [])
+    if isinstance(raw_list, str):
+        # Split on newlines, commas, semicolons, tabs, and spaces (multi-format paste)
+        import re as _re
+        raw_list = _re.split(r'[\n\r,;|\t]+', raw_list)
+
+    pole_list = [str(p).strip() for p in raw_list if str(p).strip()]
+
+    results = []
+    not_found = []
+
+    for pole_no in pole_list:
+        # Try exact match first, then prefix/suffix trim
+        clean_no = re.sub(r'^(UHT|HT|LT|SL)', '', pole_no).strip()
+        cur.execute("""
+            SELECT
+                pole_no, zone, latitude, longitude,
+                grid_name, trunk_feeder, sub_feeder, substation, dt_name,
+                COUNT(ca_no) as consumer_count,
+                ROUND(SUM(consumer_load), 2) as total_load_kw
+            FROM consumers
+            WHERE (pole_no = ? OR pole_no LIKE ? OR pole_no = ? OR pole_no LIKE ?)
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+            GROUP BY pole_no, zone, latitude, longitude, grid_name, trunk_feeder, sub_feeder, substation, dt_name
+            LIMIT 1
+        """, [pole_no, f"%{pole_no}%", clean_no, f"%{clean_no}%"])
+        row = cur.fetchone()
+        if row:
+            results.append({
+                "pole_no": row["pole_no"],
+                "zone": row["zone"],
+                "latitude": row["latitude"],
+                "longitude": row["longitude"],
+                "grid_name": row["grid_name"],
+                "trunk_feeder": row["trunk_feeder"],
+                "sub_feeder": row["sub_feeder"],
+                "substation": row["substation"],
+                "dt_name": row["dt_name"],
+                "consumer_count": row["consumer_count"],
+                "total_load_kw": row["total_load_kw"],
+                "tata_gis_link": f"https://eprajal.tatapower-ddl.com/GIS/default.aspx?search={row['pole_no']}",
+                "input_query": pole_no,
+                "matched": True
+            })
+        else:
+            not_found.append({"input_query": pole_no, "matched": False})
+
+    conn.close()
+    return {
+        "found": results,
+        "not_found": not_found,
+        "total_queried": len(pole_list),
+        "total_found": len(results),
+        "total_not_found": len(not_found)
+    }
+
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 

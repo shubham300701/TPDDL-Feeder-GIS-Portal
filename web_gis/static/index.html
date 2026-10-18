@@ -152,7 +152,11 @@
         <button onclick="switchTab('faults')" id="nav-btn-faults" class="nav-icon-btn p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition cursor-pointer" title="Outage &amp; Maintenance Simulator">
           <i data-lucide="alert-triangle" class="w-5 h-5"></i>
         </button>
-        <!-- 5. Executive Network Analytics Dashboard -->
+        <!-- 5. Bulk Pole Plotter -->
+        <button onclick="switchTab('bulk')" id="nav-btn-bulk" class="nav-icon-btn p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition cursor-pointer" title="Bulk Pole Plotter &amp; Multi-Location Mapper">
+          <i data-lucide="map-pin-plus" class="w-5 h-5"></i>
+        </button>
+        <!-- 6. Executive Network Analytics Dashboard -->
         <button onclick="switchTab('analytics')" id="nav-btn-analytics" class="nav-icon-btn p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition cursor-pointer" title="Network Analytics &amp; Executive Insights">
           <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
         </button>
@@ -636,7 +640,131 @@
         </div>
       </div>
 
-      <!-- TAB 5: Executive Network Analytics Dashboard -->
+      <!-- TAB 5: Bulk Pole Plotter & Multi-Location Mapper -->
+      <div id="view-bulk" class="tab-content flex-1 overflow-y-auto bg-slate-50 p-5 hidden">
+        <div class="max-w-5xl mx-auto space-y-4">
+
+          <!-- Header Banner -->
+          <div class="bg-white border border-slate-300 p-3.5 rounded-lg shadow-xs flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                <i data-lucide="map-pin-plus" class="w-4 h-4 text-[#005DAA]"></i> Bulk Pole Plotter &amp; Multi-Location Mapper
+              </h2>
+              <p class="text-xs text-slate-500 font-semibold mt-0.5">Paste 200–300 pole numbers in any format (one per line, CSV, space-separated). All valid poles will be plotted on the GIS map instantly. Click any result row to open TATA Power GIS or zoom to the pole on map.</p>
+            </div>
+            <span class="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-bold whitespace-nowrap shrink-0">Multi-Plot Mode</span>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+            <!-- Left Panel: Input -->
+            <div class="lg:col-span-5 space-y-3">
+
+              <!-- Paste Area -->
+              <div class="bg-white border border-slate-300 p-3.5 rounded-lg shadow-xs space-y-2.5 text-xs">
+                <div class="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <label class="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                    <i data-lucide="clipboard-paste" class="w-4 h-4 text-[#005DAA]"></i> Paste Pole Numbers
+                  </label>
+                  <button onclick="clearBulkInput()" class="text-[10px] text-slate-500 hover:text-rose-600 font-bold flex items-center gap-1 cursor-pointer">
+                    <i data-lucide="trash-2" class="w-3 h-3"></i> Clear
+                  </button>
+                </div>
+
+                <textarea
+                  id="bulk-pole-input"
+                  rows="16"
+                  placeholder="Paste pole numbers here — one per line, or comma/space-separated:&#10;&#10;HT515-41/1/12&#10;HT518-22/3/4&#10;HT515-09/2/7&#10;..."
+                  class="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-2 text-[11px] text-slate-900 font-mono focus:border-blue-600 focus:outline-none resize-none leading-relaxed"
+                  oninput="updateBulkCount()"
+                ></textarea>
+
+                <div class="flex items-center justify-between text-[11px] text-slate-500 font-semibold">
+                  <span id="bulk-input-count">0 pole numbers detected</span>
+                  <button onclick="loadBulkSample()" class="text-blue-600 hover:underline font-bold cursor-pointer">Load Sample (5 Poles)</button>
+                </div>
+              </div>
+
+              <!-- Action Buttons -->
+              <div class="flex gap-2">
+                <button onclick="runBulkPlot()" class="flex-1 bg-[#005DAA] hover:bg-[#004A8F] text-white font-bold py-2.5 px-3 rounded shadow-xs transition uppercase tracking-wider text-xs flex items-center justify-center gap-1.5 cursor-pointer">
+                  <i data-lucide="map-pin" class="w-4 h-4"></i> Plot All on Map
+                </button>
+                <button onclick="clearBulkPlot()" class="bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-300 hover:border-rose-300 py-2.5 px-3 rounded font-bold transition text-xs cursor-pointer" title="Clear all plotted pins from map">
+                  <i data-lucide="x-circle" class="w-4 h-4"></i>
+                </button>
+              </div>
+
+              <!-- Status / Progress -->
+              <div id="bulk-status-panel" class="hidden bg-white border border-slate-200 rounded p-2.5 text-xs space-y-1.5 shadow-xs">
+                <div class="flex items-center justify-between font-bold text-slate-700">
+                  <span>Plot Results</span>
+                  <span id="bulk-status-badge" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Ready</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1.5 text-center text-[11px]">
+                  <div class="bg-emerald-50 border border-emerald-200 rounded p-1.5">
+                    <span class="block font-bold text-slate-500 text-[10px] uppercase">Found</span>
+                    <span id="bulk-found-count" class="font-extrabold text-emerald-700 font-mono text-sm">0</span>
+                  </div>
+                  <div class="bg-rose-50 border border-rose-200 rounded p-1.5">
+                    <span class="block font-bold text-slate-500 text-[10px] uppercase">Not Found</span>
+                    <span id="bulk-notfound-count" class="font-extrabold text-rose-700 font-mono text-sm">0</span>
+                  </div>
+                  <div class="bg-blue-50 border border-blue-200 rounded p-1.5">
+                    <span class="block font-bold text-slate-500 text-[10px] uppercase">Load (kW)</span>
+                    <span id="bulk-total-load" class="font-extrabold text-blue-800 font-mono text-sm">0</span>
+                  </div>
+                </div>
+                <!-- Not-found list -->
+                <div id="bulk-notfound-panel" class="hidden">
+                  <p class="font-bold text-rose-700 text-[10px] uppercase mt-1 mb-0.5">Unresolved Poles:</p>
+                  <div id="bulk-notfound-list" class="font-mono text-rose-700 text-[10px] bg-rose-50 rounded p-1.5 max-h-20 overflow-y-auto"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Panel: Results Table -->
+            <div class="lg:col-span-7 bg-white border border-slate-300 rounded-lg shadow-xs flex flex-col overflow-hidden">
+              <div class="flex items-center justify-between p-3 border-b border-slate-200 text-xs bg-slate-50">
+                <span class="font-bold text-slate-800 flex items-center gap-1.5">
+                  <i data-lucide="table" class="w-3.5 h-3.5 text-[#005DAA]"></i> Resolved Pole Coordinates
+                </span>
+                <div class="flex items-center gap-2">
+                  <button onclick="exportBulkCsv()" id="bulk-export-btn" class="hidden bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer">
+                    <i data-lucide="download" class="w-3 h-3"></i> Export CSV
+                  </button>
+                  <button onclick="fitBulkBounds()" id="bulk-fit-btn" class="hidden bg-[#005DAA] hover:bg-[#004A8F] text-white text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer">
+                    <i data-lucide="maximize-2" class="w-3 h-3"></i> Fit Map
+                  </button>
+                </div>
+              </div>
+              <div class="flex-1 overflow-auto">
+                <table class="w-full text-left border-collapse text-[11px]">
+                  <thead class="bg-slate-100 text-slate-700 font-bold sticky top-0 border-b border-slate-200 text-[10px] uppercase tracking-wider z-10">
+                    <tr>
+                      <th class="p-2">#</th>
+                      <th class="p-2">Pole No</th>
+                      <th class="p-2">Zone</th>
+                      <th class="p-2">DT Name</th>
+                      <th class="p-2">Sub Feeder</th>
+                      <th class="p-2 text-right">CAs</th>
+                      <th class="p-2 text-right">kW</th>
+                      <th class="p-2 text-center">GIS</th>
+                      <th class="p-2 text-center">Map</th>
+                    </tr>
+                  </thead>
+                  <tbody id="bulk-results-table" class="divide-y divide-slate-100 font-mono">
+                    <tr><td colspan="9" class="text-center py-12 text-slate-400 font-sans font-semibold text-xs">Paste pole numbers on the left and click "Plot All on Map"</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 6: Executive Network Analytics Dashboard -->
       <div id="view-analytics" class="tab-content flex-1 overflow-y-auto bg-slate-50 p-5 hidden">
         <div class="max-w-6xl mx-auto space-y-4">
           
@@ -2245,6 +2373,221 @@
       if (currentFilters.dt) params.append('dt', currentFilters.dt);
       window.open(`/api/export_csv?${params.toString()}`, '_blank');
     }
+
+    // ─── BULK POLE PLOTTER ───────────────────────────────────────────────────────
+    let bulkPolesLayer = null;   // Leaflet layer for bulk-plotted pins
+    let bulkResultsData = [];    // Stored API results for CSV export and fitBounds
+
+    // Parse raw textarea input → array of unique pole number strings
+    function parseBulkInput() {
+      const raw = (document.getElementById('bulk-pole-input').value || '').trim();
+      if (!raw) return [];
+      // Split on newlines, commas, semicolons, pipes, tabs — then trim & deduplicate
+      const parts = raw.split(/[\n\r,;|\t\s]+/).map(s => s.trim()).filter(s => s.length > 0);
+      return [...new Set(parts)]; // deduplicate
+    }
+
+    function updateBulkCount() {
+      const poles = parseBulkInput();
+      const el = document.getElementById('bulk-input-count');
+      if (el) el.textContent = `${poles.length} pole number${poles.length !== 1 ? 's' : ''} detected`;
+    }
+
+    function loadBulkSample() {
+      document.getElementById('bulk-pole-input').value =
+        'HT515-44/83\n515-1/67\n515-1/65\nHT515-41/1/12\n515-1/64';
+      updateBulkCount();
+    }
+
+    function clearBulkInput() {
+      document.getElementById('bulk-pole-input').value = '';
+      updateBulkCount();
+    }
+
+    function clearBulkPlot() {
+      if (bulkPolesLayer) {
+        bulkPolesLayer.clearLayers();
+      }
+      document.getElementById('bulk-results-table').innerHTML =
+        `<tr><td colspan="9" class="text-center py-12 text-slate-400 font-sans font-semibold text-xs">Paste pole numbers on the left and click "Plot All on Map"</td></tr>`;
+      document.getElementById('bulk-status-panel').classList.add('hidden');
+      document.getElementById('bulk-export-btn').classList.add('hidden');
+      document.getElementById('bulk-fit-btn').classList.add('hidden');
+      bulkResultsData = [];
+    }
+
+    async function runBulkPlot() {
+      const poles = parseBulkInput();
+      if (poles.length === 0) {
+        alert('Please paste at least one pole number before plotting.');
+        return;
+      }
+      if (poles.length > 500) {
+        if (!confirm(`You've pasted ${poles.length} poles. This may take a moment. Continue?`)) return;
+      }
+
+      // Set status to processing
+      const statusBadge = document.getElementById('bulk-status-badge');
+      const statusPanel = document.getElementById('bulk-status-panel');
+      statusPanel.classList.remove('hidden');
+      statusBadge.textContent = 'Resolving…';
+      statusBadge.className = 'text-[10px] bg-amber-500 text-white font-bold px-2 py-0.5 rounded animate-pulse';
+
+      const tbody = document.getElementById('bulk-results-table');
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-400 font-sans font-bold text-xs">Resolving ${poles.length} pole numbers against the GIS database…</td></tr>`;
+
+      try {
+        const res = await fetch('/api/bulk_poles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poles })
+        });
+        if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+        const data = await res.json();
+        bulkResultsData = data.found || [];
+
+        // Update status counters
+        statusBadge.textContent = 'Plotted';
+        statusBadge.className = 'text-[10px] bg-emerald-700 text-white font-bold px-2 py-0.5 rounded';
+        document.getElementById('bulk-found-count').textContent = data.total_found;
+        document.getElementById('bulk-notfound-count').textContent = data.total_not_found;
+        const totalLoad = data.found.reduce((s, p) => s + (p.total_load_kw || 0), 0);
+        document.getElementById('bulk-total-load').textContent = totalLoad.toLocaleString(undefined, {maximumFractionDigits: 0});
+
+        // Not-found list
+        if (data.not_found && data.not_found.length > 0) {
+          document.getElementById('bulk-notfound-panel').classList.remove('hidden');
+          document.getElementById('bulk-notfound-list').textContent = data.not_found.map(p => p.input_query).join(', ');
+        } else {
+          document.getElementById('bulk-notfound-panel').classList.add('hidden');
+        }
+
+        // Build results table
+        tbody.innerHTML = '';
+        if (data.found.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-rose-500 font-sans font-bold text-xs">No poles resolved — check pole number format (e.g. HT515-41/1/12)</td></tr>`;
+        } else {
+          data.found.forEach((p, idx) => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-blue-50 border-b border-slate-100 cursor-pointer';
+            tr.innerHTML = `
+              <td class="p-1.5 text-slate-400 font-bold">${idx + 1}</td>
+              <td class="p-1.5 font-bold text-slate-900 font-mono text-[10.5px]">${p.pole_no}</td>
+              <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.zone === '515' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">${p.zone}</span></td>
+              <td class="p-1.5 text-slate-600 text-[10px] truncate max-w-[120px]" title="${p.dt_name}">${p.dt_name || '--'}</td>
+              <td class="p-1.5 text-slate-500 text-[10px] truncate max-w-[100px]" title="${p.sub_feeder}">${p.sub_feeder || '--'}</td>
+              <td class="p-1.5 text-right font-bold text-slate-800">${p.consumer_count}</td>
+              <td class="p-1.5 text-right font-bold text-emerald-800 font-mono">${(p.total_load_kw || 0).toLocaleString()}</td>
+              <td class="p-1.5 text-center">
+                <a href="${p.tata_gis_link}" target="_blank" class="text-blue-700 hover:text-blue-900 font-bold text-[10px] underline" title="Open in TATA Power GIS Portal">GIS</a>
+              </td>
+              <td class="p-1.5 text-center">
+                <button onclick="zoomToBulkPole(${p.latitude}, ${p.longitude}, '${p.pole_no.replace(/'/g, "\\'")}', ${idx})" class="text-[#005DAA] hover:text-blue-900 font-bold text-[10px]" title="Zoom to pole on GIS Map">
+                  <i data-lucide="map-pin" class="w-3.5 h-3.5 mx-auto"></i>
+                </button>
+              </td>
+            `;
+            tbody.appendChild(tr);
+          });
+          lucide.createIcons();
+          document.getElementById('bulk-export-btn').classList.remove('hidden');
+          document.getElementById('bulk-fit-btn').classList.remove('hidden');
+        }
+
+        // Plot all resolved poles on the GIS map
+        plotBulkPinsOnMap(data.found);
+
+      } catch (e) {
+        console.error('Bulk plot error:', e);
+        statusBadge.textContent = 'Error';
+        statusBadge.className = 'text-[10px] bg-rose-600 text-white font-bold px-2 py-0.5 rounded';
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-600 font-bold font-sans text-xs">${e.message || 'Failed to resolve poles. Ensure server is running.'}</td></tr>`;
+      }
+    }
+
+    function plotBulkPinsOnMap(poles) {
+      if (!map) return;
+
+      // Initialise or clear the dedicated bulk layer
+      if (!bulkPolesLayer) {
+        bulkPolesLayer = L.featureGroup().addTo(map);
+      } else {
+        bulkPolesLayer.clearLayers();
+      }
+
+      const bounds = [];
+      poles.forEach((p, idx) => {
+        if (!p.latitude || !p.longitude) return;
+
+        // Zone-coloured circle markers (515=blue, 518=purple)
+        const color = p.zone === '515' ? '#1d4ed8' : '#7e22ce';
+        const fillColor = p.zone === '515' ? '#3b82f6' : '#a855f7';
+
+        const marker = L.circleMarker([p.latitude, p.longitude], {
+          radius: 7,
+          fillColor,
+          color,
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.88
+        });
+
+        // Tooltip
+        marker.bindTooltip(`
+          <b>#${idx + 1} ${p.pole_no}</b><br/>
+          Zone: ${p.zone} | DT: ${p.dt_name || '--'}<br/>
+          CAs: ${p.consumer_count} | Load: ${(p.total_load_kw || 0).toLocaleString()} kW
+        `, { className: 'clean-tooltip', sticky: true });
+
+        // Click → open pole modal
+        marker.on('click', () => openPoleModal(p.pole_no));
+
+        marker.addTo(bulkPolesLayer);
+        bounds.push([p.latitude, p.longitude]);
+      });
+
+      // Fit bounds and switch to map tab
+      if (bounds.length > 0) {
+        switchTab('map');
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      }
+    }
+
+    function zoomToBulkPole(lat, lon, poleNo, idx) {
+      switchTab('map');
+      if (lat && lon) {
+        map.setView([lat, lon], 18, { animate: true });
+        openPoleModal(poleNo);
+      }
+    }
+
+    function fitBulkBounds() {
+      if (!bulkPolesLayer || !map) return;
+      const bounds = bulkPolesLayer.getBounds();
+      if (bounds.isValid()) {
+        switchTab('map');
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      }
+    }
+
+    function exportBulkCsv() {
+      if (!bulkResultsData || bulkResultsData.length === 0) return;
+      const headers = ['Pole No','Zone','Latitude','Longitude','Grid','Trunk Feeder','Sub Feeder','Substation','DT Name','Consumers','Load (kW)','TATA GIS Link'];
+      const rows = bulkResultsData.map(p => [
+        p.pole_no, p.zone, p.latitude, p.longitude,
+        p.grid_name, p.trunk_feeder, p.sub_feeder, p.substation, p.dt_name,
+        p.consumer_count, p.total_load_kw, p.tata_gis_link
+      ]);
+      const csvContent = [headers, ...rows].map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Bulk_Pole_Plot_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    // ─────────────────────────────────────────────────────────────────────────────
   </script>
 </body>
 </html>
