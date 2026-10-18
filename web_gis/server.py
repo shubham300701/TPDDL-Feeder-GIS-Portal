@@ -969,7 +969,44 @@ def bulk_poles_lookup(data: Dict[str, Any]):
                 "matched": True
             })
         else:
-            not_found.append({"input_query": pole_no, "matched": False})
+            # Pole not in local DB — fall back to TPDDL GIS web portal link
+            # Try also checking if pole exists but has zero consumers (no lat/lon)
+            cur.execute("""
+                SELECT pole_no, zone, grid_name, trunk_feeder, sub_feeder, substation, dt_name,
+                       COUNT(ca_no) as consumer_count,
+                       ROUND(SUM(consumer_load), 2) as total_load_kw
+                FROM consumers
+                WHERE (pole_no = ? OR pole_no LIKE ? OR pole_no = ? OR pole_no LIKE ?)
+                GROUP BY pole_no, zone, grid_name, trunk_feeder, sub_feeder, substation, dt_name
+                LIMIT 1
+            """, [pole_no, f"%{pole_no}%", clean_no, f"%{clean_no}%"])
+            partial = cur.fetchone()
+            if partial:
+                # Pole exists in DB but has no coordinates (unplotted)
+                results.append({
+                    "pole_no": partial["pole_no"],
+                    "zone": partial["zone"],
+                    "latitude": None,
+                    "longitude": None,
+                    "grid_name": partial["grid_name"],
+                    "trunk_feeder": partial["trunk_feeder"],
+                    "sub_feeder": partial["sub_feeder"],
+                    "substation": partial["substation"],
+                    "dt_name": partial["dt_name"],
+                    "consumer_count": partial["consumer_count"],
+                    "total_load_kw": partial["total_load_kw"],
+                    "tata_gis_link": f"https://www.tatapower-ddl.com/gis/index-gps.html#openModal",
+                    "input_query": pole_no,
+                    "matched": True,
+                    "source": "local_no_coords"
+                })
+            else:
+                not_found.append({
+                    "input_query": pole_no,
+                    "matched": False,
+                    "source": "web",
+                    "tata_gis_link": f"https://www.tatapower-ddl.com/gis/index-gps.html#openModal"
+                })
 
     conn.close()
     return {

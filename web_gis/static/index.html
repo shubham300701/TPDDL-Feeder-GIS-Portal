@@ -2447,55 +2447,106 @@
         bulkResultsData = data.found || [];
 
         // Update status counters
-        statusBadge.textContent = 'Plotted';
+        statusBadge.textContent = 'Complete';
         statusBadge.className = 'text-[10px] bg-emerald-700 text-white font-bold px-2 py-0.5 rounded';
         document.getElementById('bulk-found-count').textContent = data.total_found;
         document.getElementById('bulk-notfound-count').textContent = data.total_not_found;
-        const totalLoad = data.found.reduce((s, p) => s + (p.total_load_kw || 0), 0);
+        const totalLoad = (data.found || []).reduce((s, p) => s + (p.total_load_kw || 0), 0);
         document.getElementById('bulk-total-load').textContent = totalLoad.toLocaleString(undefined, {maximumFractionDigits: 0});
 
-        // Not-found list
-        if (data.not_found && data.not_found.length > 0) {
-          document.getElementById('bulk-notfound-panel').classList.remove('hidden');
-          document.getElementById('bulk-notfound-list').textContent = data.not_found.map(p => p.input_query).join(', ');
-        } else {
-          document.getElementById('bulk-notfound-panel').classList.add('hidden');
-        }
+        // Hide old not-found sub-panel (now shown inline in table)
+        document.getElementById('bulk-notfound-panel').classList.add('hidden');
 
-        // Build results table
+        // Build UNIFIED results table (found + not-found together in order)
         tbody.innerHTML = '';
-        if (data.found.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-rose-500 font-sans font-bold text-xs">No poles resolved — check pole number format (e.g. HT515-41/1/12)</td></tr>`;
+        const allRows = [
+          ...(data.found || []).map(p => ({ ...p, _type: p.source === 'local_no_coords' ? 'no_coords' : 'found' })),
+          ...(data.not_found || []).map(p => ({ ...p, _type: 'web' }))
+        ];
+
+        if (allRows.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-rose-500 font-sans font-bold text-xs">No poles found — check format (e.g. HT515-41/1/12)</td></tr>`;
         } else {
-          data.found.forEach((p, idx) => {
+          allRows.forEach((p, idx) => {
             const tr = document.createElement('tr');
-            tr.className = 'hover:bg-blue-50 border-b border-slate-100 cursor-pointer';
-            tr.innerHTML = `
-              <td class="p-1.5 text-slate-400 font-bold">${idx + 1}</td>
-              <td class="p-1.5 font-bold text-slate-900 font-mono text-[10.5px]">${p.pole_no}</td>
-              <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.zone === '515' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">${p.zone}</span></td>
-              <td class="p-1.5 text-slate-600 text-[10px] truncate max-w-[120px]" title="${p.dt_name}">${p.dt_name || '--'}</td>
-              <td class="p-1.5 text-slate-500 text-[10px] truncate max-w-[100px]" title="${p.sub_feeder}">${p.sub_feeder || '--'}</td>
-              <td class="p-1.5 text-right font-bold text-slate-800">${p.consumer_count}</td>
-              <td class="p-1.5 text-right font-bold text-emerald-800 font-mono">${(p.total_load_kw || 0).toLocaleString()}</td>
-              <td class="p-1.5 text-center">
-                <a href="${p.tata_gis_link}" target="_blank" class="text-blue-700 hover:text-blue-900 font-bold text-[10px] underline" title="Open in TATA Power GIS Portal">GIS</a>
-              </td>
-              <td class="p-1.5 text-center">
-                <button onclick="zoomToBulkPole(${p.latitude}, ${p.longitude}, '${p.pole_no.replace(/'/g, "\\'")}', ${idx})" class="text-[#005DAA] hover:text-blue-900 font-bold text-[10px]" title="Zoom to pole on GIS Map">
-                  <i data-lucide="map-pin" class="w-3.5 h-3.5 mx-auto"></i>
-                </button>
-              </td>
-            `;
+
+            if (p._type === 'found') {
+              // ── GREEN row: found in local DB with coordinates ──
+              tr.className = 'hover:bg-blue-50 border-b border-slate-100';
+              tr.innerHTML = `
+                <td class="p-1.5 text-slate-400 font-bold text-[10px]">${idx + 1}</td>
+                <td class="p-1.5 font-bold text-slate-900 font-mono text-[10.5px]">${p.pole_no}</td>
+                <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.zone === '515' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">${p.zone}</span></td>
+                <td class="p-1.5 text-slate-600 text-[10px] truncate max-w-[110px]" title="${p.dt_name || ''}">${p.dt_name || '--'}</td>
+                <td class="p-1.5 text-slate-500 text-[10px] truncate max-w-[90px]" title="${p.sub_feeder || ''}">${p.sub_feeder || '--'}</td>
+                <td class="p-1.5 text-right font-bold text-slate-800 text-[10.5px]">${p.consumer_count}</td>
+                <td class="p-1.5 text-right font-bold text-emerald-800 font-mono text-[10.5px]">${(p.total_load_kw || 0).toLocaleString()}</td>
+                <td class="p-1.5 text-center">
+                  <a href="${p.tata_gis_link}" target="_blank" title="Open TATA Power ePrajal GIS Portal" class="text-blue-700 hover:text-blue-900 font-bold text-[10px] underline">GIS ↗</a>
+                </td>
+                <td class="p-1.5 text-center">
+                  <button onclick="zoomToBulkPole(${p.latitude}, ${p.longitude}, '${p.pole_no.replace(/'/g, "\\'")}', ${idx})" class="text-[#005DAA] hover:text-blue-900" title="Zoom to pole on GIS Map">
+                    <i data-lucide="map-pin" class="w-3.5 h-3.5 mx-auto"></i>
+                  </button>
+                </td>
+              `;
+
+            } else if (p._type === 'no_coords') {
+              // ── YELLOW row: in DB but no GPS coordinates recorded ──
+              tr.className = 'bg-amber-50 border-b border-amber-100';
+              tr.innerHTML = `
+                <td class="p-1.5 text-amber-400 font-bold text-[10px]">${idx + 1}</td>
+                <td class="p-1.5 font-bold text-amber-900 font-mono text-[10.5px]">
+                  ${p.pole_no}
+                  <span class="ml-1 text-[9px] bg-amber-100 text-amber-700 border border-amber-300 px-1 py-0.5 rounded font-bold" title="Pole found in local database but GIS coordinates not recorded">No GPS</span>
+                </td>
+                <td class="p-1.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.zone === '515' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">${p.zone || '--'}</span></td>
+                <td class="p-1.5 text-amber-700 text-[10px] truncate max-w-[110px]" title="${p.dt_name || ''}">${p.dt_name || '--'}</td>
+                <td class="p-1.5 text-amber-600 text-[10px] truncate max-w-[90px]" title="${p.sub_feeder || ''}">${p.sub_feeder || '--'}</td>
+                <td class="p-1.5 text-right font-bold text-amber-800 text-[10.5px]">${p.consumer_count}</td>
+                <td class="p-1.5 text-right font-bold text-amber-700 font-mono text-[10.5px]">${(p.total_load_kw || 0).toLocaleString()}</td>
+                <td class="p-1.5 text-center">
+                  <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal" target="_blank" title="Open TPDDL GIS to locate this pole manually" class="text-amber-700 hover:text-amber-900 font-bold text-[10px] underline">GIS ↗</a>
+                </td>
+                <td class="p-1.5 text-center text-amber-400 text-[10px] font-bold" title="No GPS coordinates — cannot plot on map">—</td>
+              `;
+
+            } else {
+              // ── RED/AMBER row: NOT in local DB at all → "Searched from Web" ──
+              tr.className = 'bg-rose-50 border-b border-rose-100';
+              tr.innerHTML = `
+                <td class="p-1.5 text-rose-400 font-bold text-[10px]">${idx + 1}</td>
+                <td class="p-1.5 font-bold text-rose-800 font-mono text-[10.5px]">
+                  ${p.input_query}
+                  <span class="ml-1 text-[9px] bg-rose-100 text-rose-700 border border-rose-300 px-1 py-0.5 rounded font-bold" title="Not found in local Zone 515 & 518 database — click GIS to search on TPDDL Portal">Not in DB</span>
+                </td>
+                <td class="p-1.5 text-rose-400 text-[10px]">—</td>
+                <td class="p-1.5 text-rose-400 text-[10px]">—</td>
+                <td class="p-1.5 text-rose-400 text-[10px]">—</td>
+                <td class="p-1.5 text-right text-rose-400 text-[10px]">—</td>
+                <td class="p-1.5 text-right text-rose-400 text-[10px]">—</td>
+                <td class="p-1.5 text-center">
+                  <a href="https://www.tatapower-ddl.com/gis/index-gps.html#openModal"
+                     target="_blank"
+                     title="Searched from Web — Not in local database. Click to open TPDDL GIS portal and search manually for this pole."
+                     class="inline-flex items-center gap-0.5 text-rose-700 hover:text-rose-900 font-bold text-[10px] underline">
+                    🌐 Web ↗
+                  </a>
+                </td>
+                <td class="p-1.5 text-center text-rose-400 text-[10px] font-bold" title="Cannot plot — not in local database">—</td>
+              `;
+            }
+
             tbody.appendChild(tr);
           });
+
           lucide.createIcons();
           document.getElementById('bulk-export-btn').classList.remove('hidden');
           document.getElementById('bulk-fit-btn').classList.remove('hidden');
         }
 
-        // Plot all resolved poles on the GIS map
-        plotBulkPinsOnMap(data.found);
+        // Plot only poles that have coordinates on the GIS map
+        plotBulkPinsOnMap((data.found || []).filter(p => p.latitude && p.longitude));
 
       } catch (e) {
         console.error('Bulk plot error:', e);
